@@ -5,12 +5,10 @@ use std::process::Command;
 
 use ips::Patch;
 
-const DATA_FILES: [&str; 2] = ["./temp/SLUS_014.11", "./temp/DATA/WA_MRG.MRG"];
-const PATCH_FILES: [&str; 2] = ["SLUS_014.ips", "WA_MRG.ips"];
-
-fn apply_patch(target_file: &Path, patch_contents: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+fn apply_patch(target_file: &Path, patch_file: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut rom = OpenOptions::new().write(true).open(target_file)?;
-    let patch = Patch::parse(&patch_contents)?;
+    let patch_open = fs::read(patch_file)?;
+    let patch = Patch::parse(&patch_open)?;
 
     for hunk in patch.hunks() {
         rom.seek(SeekFrom::Start(hunk.offset() as u64))?;
@@ -50,42 +48,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     io::stderr().write_all(&extract_command.stderr).unwrap();
 
 
-    println!("\
-    How many cards should drop after each duel victory?
-    Enter an integer greater than 1.
-    Values up to 15 (inclusive) are supported.
-    Values greater than 15 may cause issues.");
+    println!("How many cards should drop after each duel victory?");
+    println!("Integer values between 2 and 15 (inclusive) are supported.");
 
     let mut input = String::new();
     io::stdin().read_line(&mut input).expect("Failed to read line");
-    let user_input: u32 = match input.trim().parse() {
+    let user_input: i32 = match input.trim().parse() {
         Ok(num) => num,
         Err(_) => {
             println!("Invalid input. Please enter a valid positive integer.");
             return Ok(());
         }
     };
-    if user_input <= 1 || user_input > 254 {
-        println!("Values less than 2 or greater than 254 cannot be applied.");
+    if user_input <= 1 || user_input > 15 {
+        println!("Values less than 2 or greater than 15 cannot be applied.");
         return Ok(());
     }
-    let fixed_input = user_input + 1; // 0x06 means 5 cards drop
+    println!("Patching SLUS_014.11");
+    let slus_path = Path::new("./temp/SLUS_014.11");
+    let patch_for_slus_path = Path::new("./data_patches/SLUS_014.ips");
+    apply_patch(slus_path, patch_for_slus_path)?;
 
-    let value_as_byte: u8 = fixed_input as u8;
-    let adjust_number_of_drops_patch: [u8; 14] = [
-    	0x50, 0x41, 0x54, 0x43, 0x48, 0xBC, 0x17, 0xE4, 0x00, 0x01, value_as_byte, 0x45,
-    	0x4F, 0x46
-    ];
+    println!("Patching WA_MRG.MRG");
+    let wa_path = Path::new("./temp/DATA/WA_MRG.MRG");
+    let formatted = format!("./data_patches/{}card.ips", user_input);
+    let patch_for_wa_path = Path::new(&formatted);
+    apply_patch(wa_path, patch_for_wa_path)?;
 
-    for (target_file, patch_file) in DATA_FILES.iter().zip(PATCH_FILES.iter()) {
-        let target_path = Path::new(&target_file);
-        let concat = format!("./patches/{}", patch_file);
-        let patch_path = Path::new(&concat);
-        let patch_contents = fs::read(&patch_path)?;
-        apply_patch(target_path, &patch_contents)?;
-    }
-    let wa_mrg_path = Path::new(DATA_FILES[1]);
-    apply_patch(wa_mrg_path, &adjust_number_of_drops_patch)?;
     println!("Patched as {}-card mod", user_input);
 
     println!("Rebuilding ROM as YGOFM-{}CardMod.bin/cue", user_input);
